@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <string.h>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 using namespace cv;
@@ -43,7 +45,11 @@ uint8_t total_point_y = 31; // Point of passing in y field
 uint8_t robot_radius = 20;
 int restricted_passing_areas = 0; // this is a radius from robot's passer position
 int restricted_passing_areas_obs = 0;
-int restricted_passing_areas_own = 0; // this is a radius from robot's passer position
+int restricted_passing_areas_own = 101; // this is a radius from robot's passer position
+int gain_far_obs = 50;
+
+uint16_t curr_gain = 0;
+uint16_t prev_gain = 0;
 
 //-----Vector
 //===========
@@ -61,15 +67,20 @@ float pos_y1_obs;
 
 #ifdef REGIONAL_CFG
 uint16_t virtual_obs_pose[17] = {150, 350, 150, 250, 150, 150, 300, 350, 300, 250, 450, 350, 450, 250, 450, 150};
-int active_obs_idx[2] = {0, 4};
+int active_obs_idx[2] = {6, 3};
 int clr_obs = 0;
 #endif
 
+// int16_t att_pose[3] = {299, 0, 180};
 int16_t att_pose[3] = {0, 200, 180};
 int16_t ass_pose[3] = {600, 200, -180};
 
+int16_t ball_pose[2] = {300, 0};
+
 int8_t att_vel[2] = {0, 0};
 int8_t ass_vel[2] = {0, 0};
+
+uint8_t has_ball = 0; // 1 is att, 2 is ass
 
 //---Camera Resolution
 //======================
@@ -124,6 +135,13 @@ void DrawRobots();
 int8_t kbhit();
 void KeyboardHandler();
 void RobotMovement();
+bool CheckCollision(float pos_x, float pos_y);
+void DrawBall();
+void KickBall();
+bool CheckLineCircleIntersection(float x1, float y1, float x2, float y2, float cx, float cy, float r);
+bool isIntersecting(float target_x, float target_y, float att_pose_x, float att_pose_y,
+                    float obs_x, float obs_y, float obs_width, float obs_height);
+void setInterval(uint16_t interval);
 
 int main(int argc, char **argv)
 {
@@ -135,6 +153,7 @@ int main(int argc, char **argv)
     createTrackbar("rstrct", "Passing", &restricted_passing_areas, 200);
     createTrackbar("rstrct obs", "Passing", &restricted_passing_areas_obs, 200);
     createTrackbar("rstrct own", "Passing", &restricted_passing_areas_own, 200);
+    createTrackbar("gain far obs", "Passing", &gain_far_obs, 200);
 
     //---> Robot Vector Init
     vec_attractive.init(attr_rad, robot_raw_vel);
@@ -161,10 +180,25 @@ int main(int argc, char **argv)
         {
             frame_display_passing.copyTo(buffer);
             imshow("Passing", buffer);
+
             if (waitKey(1) == 27)
                 break;
             // continue;
         }
+
+        if (target_x == 300 && target_y == 450)
+        {
+            setInterval(1000);
+            KickBall();
+            circle(frame_display_passing, Point(cm2px_y(ball_pose[1]), cm2px_x(ball_pose[0])), 10, Scalar(0, 0, 0), -1);
+            printf("\n\n===================================\n");
+            printf("GOLLLL\n");
+            printf("===================================\n");
+            setInterval(10000);
+            break;
+        }
+
+        circle(frame_display_passing, Point(cm2px_y(ball_pose[1]), cm2px_x(ball_pose[0])), 10, Scalar(0, 0, 0), -1);
 
         //----------------------------------------------------------//
         // calculate the potential field
@@ -179,12 +213,16 @@ int main(int argc, char **argv)
                 float pos_x = x * x_thresh_range;
                 float pos_y = y * y_thresh_range;
 
-                // if (pos_x > 200 && pos_x < 400)
-                //     continue;
+                if (pos_x > 200 && pos_x < 400)
+                    continue;
 
-                // if (att_pose[xrobot] < 300)
-                //     if (pos_x < 300)
-                //         continue;
+                if (att_pose[xrobot] < 300)
+                    if (pos_x < 300)
+                        continue;
+
+                if (att_pose[xrobot] > 300)
+                    if (pos_x > 300)
+                        continue;
 
                 // if (ass_pose[yrobot] < 450 / 2)
                 //     if (pos_y > 450 / 2)
@@ -193,7 +231,7 @@ int main(int argc, char **argv)
                 //     if (pos_y < 450 / 2)
                 //         continue;
 
-                printf("assist pose: %d %d | %d %d\n", ass_pose[xrobot], ass_pose[yrobot], ass_pose[yrobot]<450 / 2, ass_pose[yrobot]> 450 / 2);
+                // printf("assist pose: %d %d | %d %d\n", ass_pose[xrobot], ass_pose[yrobot], ass_pose[yrobot]<450 / 2, ass_pose[yrobot]> 450 / 2);
 
                 if (pos_x < ass_pose[0] + (robot_radius + restricted_passing_areas + 100) && pos_x > ass_pose[0] - (robot_radius + restricted_passing_areas + 100) && pos_y < ass_pose[1] + (robot_radius + restricted_passing_areas + 100) && pos_y > ass_pose[1] - (robot_radius + restricted_passing_areas + 100))
                     continue;
@@ -220,6 +258,13 @@ int main(int argc, char **argv)
                 pos_x1_obs = virtual_obs_pose[active_obs_idx[1] * 2];
                 pos_y1_obs = virtual_obs_pose[active_obs_idx[1] * 2 + 1];
 
+                // if (pos_y > pos_y_obs - 10 && pos_y < pos_y_obs + 10)
+                // {
+                //     printf("%f %f\n", pos_y, pos_y_obs);
+                //     printf("HEHEHE\n");
+                //     continue;
+                // }
+
                 circle(frame_display_passing, cv::Point(cm2px_y(pos_y_obs), cm2px_x(pos_x_obs)), 5, Scalar(0, 0, 0), -1);
 
                 vec_repulsive.update(pos_x, pos_y, pos_x_obs, pos_y_obs, r, theta);
@@ -227,10 +272,19 @@ int main(int argc, char **argv)
                 v_y += r * sin(theta);
                 mtx.unlock();
 
-                if (pos_x < pos_x_obs + (26 + restricted_passing_areas_obs + 50) && pos_x > pos_x_obs - (26 + restricted_passing_areas_obs + 50) && pos_y < pos_y_obs + (26 + restricted_passing_areas_obs + 50) && pos_y > pos_y_obs - (26 + restricted_passing_areas_obs + 50))
+                // if (isIntersecting(cm2px_x(pos_x), cm2px_y(pos_y), cm2px_x(att_pose[xrobot]), cm2px_y(att_pose[yrobot]), cm2px_x(pos_x_obs), cm2px_y(pos_y_obs), 26, 26))
+                //     continue;
+
+                // if (isIntersecting(cm2px_x(pos_x), cm2px_y(pos_y), cm2px_x(att_pose[xrobot]), cm2px_y(att_pose[yrobot]), cm2px_x(pos_x1_obs), cm2px_y(pos_y1_obs), 26, 26))
+                //     continue;
+
+                if (CheckLineCircleIntersection(cm2px_x(pos_x), cm2px_y(pos_y), cm2px_x(att_pose[xrobot]), cm2px_y(att_pose[yrobot]), cm2px_x(pos_x_obs), cm2px_y(pos_y_obs), gain_far_obs))
                     continue;
 
-                if (pos_x < pos_x1_obs + (26 + restricted_passing_areas_obs + 50) && pos_x > pos_x1_obs - (26 + restricted_passing_areas_obs + 50) && pos_y < pos_y1_obs + (26 + restricted_passing_areas_obs + 50) && pos_y > pos_y1_obs - (26 + restricted_passing_areas_obs + 50))
+                if (pos_x < pos_x_obs + (26 + restricted_passing_areas_obs + 20) && pos_x > pos_x_obs - (26 + restricted_passing_areas_obs + 20) && pos_y < pos_y_obs + (26 + restricted_passing_areas_obs + 20) && pos_y > pos_y_obs - (26 + restricted_passing_areas_obs + 20))
+                    continue;
+
+                if (pos_x < pos_x1_obs + (26 + restricted_passing_areas_obs + 20) && pos_x > pos_x1_obs - (26 + restricted_passing_areas_obs + 20) && pos_y < pos_y1_obs + (26 + restricted_passing_areas_obs + 20) && pos_y > pos_y1_obs - (26 + restricted_passing_areas_obs + 20))
                     continue;
 
                 float current_th_2_target = 0;
@@ -274,6 +328,11 @@ void DrawRobots()
     circle(frame_display_passing, Point(cm2px_y(ass_pose[1]), cm2px_x(ass_pose[0])), 20, Scalar(12, 0, 234), 3);
 }
 
+void DrawBall()
+{
+    circle(frame_display_passing, Point(cm2px_y(ball_pose[1]), cm2px_x(ball_pose[0])), 10, Scalar(0, 0, 0), -1);
+}
+
 void DrawField(Mat frame)
 {
 #ifdef NATIONAL_CFG
@@ -306,8 +365,6 @@ void DrawField(Mat frame)
     rectangle(frame, Rect(Point(50, 200), Point(100, 500)), Scalar(37, 168, 249), 3);
     // Goal pos
     rectangle(frame, Rect(Point(50, 250), Point(25, 450)), Scalar(255, 255, 255), 3);
-    // Ball Point
-    circle(frame, Point(500, 350), 20, Scalar(51, 51, 255), -1);
 
     // Robot init pose
     rectangle(frame, Rect(Point(cm2px_y(170), cm2px_x(0)), Point(cm2px_y(230), cm2px_x(50))), Scalar(255, 255, 255), 3);
@@ -347,16 +404,16 @@ void KeyboardHandler()
         switch (key)
         {
         case 'w':
-            att_vel[0] += 3;
-            break;
-        case 's':
             att_vel[0] -= 3;
             break;
+        case 's':
+            att_vel[0] += 3;
+            break;
         case 'a':
-            att_vel[1] -= 3;
+            att_vel[1] += 3;
             break;
         case 'd':
-            att_vel[1] += 3;
+            att_vel[1] -= 3;
             break;
 
         case 'i':
@@ -382,6 +439,19 @@ void KeyboardHandler()
             target_x = 0;
             target_y = 0;
             break;
+
+        case 'p':
+            printf("\n\n===================================\n");
+            printf("PASSING BALL\n");
+            printf("===================================\n");
+            KickBall();
+            break;
+
+        case 'b':
+            // wait for 2 seconds
+            target_x = 300;
+            target_y = 450;
+            break;
         }
     }
 }
@@ -392,4 +462,227 @@ void RobotMovement()
     att_pose[1] += att_vel[1];
     ass_pose[0] += ass_vel[0];
     ass_pose[1] += ass_vel[1];
+}
+
+bool CheckCollision(float pos_x, float pos_y)
+{
+    // check if the attacker pose and the target passing is goung through obstacles
+    // for (uint8_t i = 0; i < 2; i++)
+    // {
+    //     uint8_t idx = active_obs_idx[i];
+
+    //     // extract the coordinates of the current obstacle
+    //     uint16_t obs_x = virtual_obs_pose[2 * idx];
+    //     uint16_t obs_y = virtual_obs_pose[2 * idx + 1];
+
+    //     // calculate the distance and angle between attacker and target
+    //     float dx = pos_x - att_pose[1];
+    //     float dy = pos_y - att_pose[0];
+    //     float dist = sqrt(dx * dx + dy * dy);
+    //     float theta = atan2(dy, dx);
+
+    //     float delta_theta = atan2(obs_y - att_pose[0], obs_x - att_pose[1]) - theta;
+
+    //     if (delta_theta >= -M_PI / 2 && delta_theta <= M_PI / 2)
+    //     {
+    //         float intersection_y = att_pose[0] + (obs_x - att_pose[1]) * tan(theta);
+    //         printf("Intesection %f | pose %f %f\n", intersection_y, pos_x, pos_y);
+    //         if ((intersection_y >= obs_y - 100 && intersection_y <= obs_y + 100))
+    //             return true;
+    //     }
+    // }
+
+    // return false;
+
+    // for (int i = 0; i < 2; i++)
+    // {
+    //     int idx = active_obs_idx[i];
+
+    //     // extract the coordinates and radius of the current obstacle
+    //     uint16_t obs_x = virtual_obs_pose[2 * idx];
+    //     uint16_t obs_y = virtual_obs_pose[2 * idx + 1];
+    //     uint8_t obs_r = 26;
+
+    //     // calculate the distance between the attacker and obstacle centers
+    //     float dx = att_pose[1] - obs_x;
+    //     float dy = att_pose[0] - obs_y;
+    //     float dist = sqrt(dx * dx + dy * dy);
+
+    //     // check if there is collision between the attacker and obstacle
+    //     if (dist <= obs_r)
+    //     {
+    //         return true;
+    //     }
+
+    //     // calculate the intersection points between the line and the circle
+    //     float d = (target_y - att_pose[0]) * (att_pose[1] - obs_x) - (target_x - att_pose[1]) * (att_pose[0] - obs_y);
+    //     float discr = obs_r * obs_r * (target_y - att_pose[0]) * (target_y - att_pose[0]) + d * d - (att_pose[1] - obs_x) * (att_pose[1] - obs_x) * (target_y - att_pose[0]) * (target_y - att_pose[0]);
+
+    //     // if the discriminant is negative, there is no intersection between the line and the circle
+    //     if (discr < 0)
+    //     {
+    //         continue;
+    //     }
+
+    //     // calculate the intersection points between the line and the circle
+    //     float root = sqrt(discr);
+    //     float sgn_dy = (target_y - att_pose[0]) < 0 ? -1 : 1;
+    //     float x_int1 = (d * sgn_dy * (target_y - att_pose[0]) + sgn_dy * (att_pose[1] - obs_x) * root) / (dist * dist);
+    //     float y_int1 = (-d * sgn_dy * (att_pose[1] - obs_x) + fabsf((target_y - att_pose[0])) * root) / (dist * dist);
+    //     float x_int2 = (d * sgn_dy * (target_y - att_pose[0]) - sgn_dy * (att_pose[1] - obs_x) * root) / (dist * dist);
+    //     float y_int2 = (-d * sgn_dy * (att_pose[1] - obs_x) - fabsf((target_y - att_pose[0])) * root) / (dist * dist);
+
+    //     // check if any of the intersection points lie on the line segment between attacker and target
+    //     float min_x = fminf(att_pose[1], target_x);
+    //     float max_x = fmaxf(att_pose[1], target_x);
+    //     float min_y = fminf(att_pose[0], target_y);
+    //     float max_y = fmaxf(att_pose[0], target_y);
+    //     if (x_int1 >= min_x && x_int1 <= max_x && y_int1 >= min_y && y_int1 <= max_y)
+    //     {
+    //         return true;
+    //     }
+    //     if (x_int2 >= min_x && x_int2 <= max_x && y_int2 >= min_y && y_int2 <= max_y)
+    //     {
+    //         return true;
+    //     }
+
+    //     // check if any of the intersection points lie on the line segment between attacker and obstacle
+    //     min_x = fminf(att_pose[1], obs_x);
+    //     max_x = fmaxf(att_pose[1], obs_x);
+    //     min_y = fminf(att_pose[0], obs_y);
+    //     max_y = fmaxf(att_pose[0], obs_y);
+    //     if (x_int1 >= min_x && x_int1 <= max_x && y_int1 >= min_y && y_int1 <= max_y)
+    //     {
+    //         return true;
+    //     }
+    //     if (x_int2 >= min_x && x_int2 <= max_x && y_int2 >= min_y && y_int2 <= max_y)
+    //     {
+    //         return true;
+    //     }
+
+    //     // check if any of the intersection points lie on the line segment between obstacle and target
+    //     min_x = fminf(obs_x, target_x);
+    //     max_x = fmaxf(obs_x, target_x);
+    //     min_y = fminf(obs_y, target_y);
+    //     max_y = fmaxf(obs_y, target_y);
+
+    //     if (x_int1 >= min_x && x_int1 <= max_x && y_int1 >= min_y && y_int1 <= max_y)
+    //     {
+    //         return true;
+    //     }
+    //     if (x_int2 >= min_x && x_int2 <= max_x && y_int2 >= min_y && y_int2 <= max_y)
+    //     {
+    //         return true;
+    //     }
+    // }
+    // return false;
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        int idx = active_obs_idx[i];
+
+        // extract the coordinates and radius of the current obstacle
+        uint16_t obs_x = virtual_obs_pose[2 * idx];
+        uint16_t obs_y = virtual_obs_pose[2 * idx + 1];
+        uint8_t obs_r = 26;
+
+        float dx = target_x - att_pose[xrobot];
+        float dy = target_y - att_pose[yrobot];
+
+        float fx = att_pose[xrobot] - obs_x;
+        float fy = att_pose[yrobot] - obs_y;
+
+        float a = dx * dx + dy * dy;
+        float b = 2 * (fx * dx + fy * dy);
+        float c = fx * fx + fy * fy - obs_r * obs_r;
+
+        float discr = b * b - 4 * a * c;
+
+        if (discr < 0)
+            return false;
+
+        float t1 = (-b + std::sqrt(discr)) / (2 * a);
+        float t2 = (-b - std::sqrt(discr)) / (2 * a);
+
+        // Check if either of the roots lie between 0 and 1 (i.e. the intersection point lies on the line segment)
+        if (t1 >= 0 && t1 <= 1)
+        {
+            return true;
+        }
+        if (t2 >= 0 && t2 <= 1)
+        {
+            return true;
+        }
+
+        // If neither of the roots lie between 0 and 1, there is no intersection
+    }
+    return false;
+}
+
+void KickBall()
+{
+    ball_pose[0] = target_x;
+    ball_pose[1] = target_y;
+
+    int16_t buffer_ass_pose[2] = {ass_pose[0], ass_pose[1]};
+
+    ass_pose[0] = att_pose[0];
+    ass_pose[1] = att_pose[1];
+
+    att_pose[0] = buffer_ass_pose[0];
+    att_pose[1] = buffer_ass_pose[1];
+}
+
+bool CheckLineCircleIntersection(float x1, float y1, float x2, float y2, float cx, float cy, float r)
+{
+    // Calculate the distance between the center of the circle and the line
+    float dist = std::abs((y2 - y1) * cx - (x2 - x1) * cy + x2 * y1 - y2 * x1) / std::sqrt((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1));
+
+    // Check if the distance is less than or equal to the radius of the circle
+    if (dist <= r)
+    {
+        return true;
+    }
+
+    // If the distance is greater than the radius of the circle, there is no intersection
+    return false;
+}
+
+bool isIntersecting(float target_x, float target_y, float att_pose_x, float att_pose_y,
+                    float obs_x, float obs_y, float obs_width, float obs_height)
+{
+    // Calculate the minimum and maximum x and y coordinates of the obstacle.
+    float obs_min_x = obs_x;
+    float obs_max_x = obs_x + obs_width;
+    float obs_min_y = obs_y;
+    float obs_max_y = obs_y + obs_height;
+
+    // Calculate the slope and y-intercept of the line formed by the target and attacker positions.
+    float m = (att_pose_y - target_y) / (att_pose_x - target_x);
+    float b = target_y - m * target_x;
+
+    // Calculate the y-coordinate of the line at the minimum and maximum x values of the obstacle.
+    float y_min = m * obs_min_x + b;
+    float y_max = m * obs_max_x + b;
+
+    // Check if the y-coordinate of the line at the minimum or maximum x value is within the range of the obstacle's y-coordinates.
+    if ((y_min >= obs_min_y && y_min <= obs_max_y) || (y_max >= obs_min_y && y_max <= obs_max_y))
+    {
+        return true;
+    }
+
+    // Check if the line formed by the target and attacker positions intersects with the left or right edge of the obstacle.
+    if ((target_x <= obs_min_x && att_pose_x >= obs_min_x) || (target_x >= obs_max_x && att_pose_x <= obs_max_x))
+    {
+        return true;
+    }
+
+    // The line does not intersect with the obstacle.
+    return false;
+}
+
+void setInterval(uint16_t interval)
+{
+    // use chrono
+    std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 }

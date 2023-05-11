@@ -68,12 +68,14 @@ int gain_far_obs = 50;
 int state_machine = 0;
 bool calculate_target = false;
 bool free_ball = true;
+int8_t ball_on = -1;
 
 //===>>Prototype Functions
 void Init();
 int8_t kbhit();
 void Routine();
 void DrawObs();
+void PassBall();
 void DrawBall();
 void DrawField();
 void DrawRobot();
@@ -191,27 +193,33 @@ void DrawBall()
     cv::circle(frame_display_passing, cv::Point(cm2px_y(ball.pos[0]), cm2px_x(ball.pos[1])), ball_size, cv::Scalar(0, 0, 255), -1);
     if (robot_2.role)
     {
-        if (sqrt(pow(robot_2.pos[0] - ball.pos[0], 2) + pow(robot_2.pos[1] - ball.pos[1], 2)) < 50)
+        if (sqrt(pow(robot_2.pos[0] - ball.pos[0], 2) + pow(robot_2.pos[1] - ball.pos[1], 2)) < 50 && free_ball)
         {
             ball.pos[0] = robot_2.pos[0] + 20 * cos(robot_2.pos[2] * DEG2RAD);
             ball.pos[1] = robot_2.pos[1] + 20 * sin(robot_2.pos[2] * DEG2RAD);
             ball_size = 15;
+            free_ball = false;
+            ball_on = 1;
         }
         else
         {
+            free_ball = true;
             ball_size = 10;
         }
     }
     else if (robot_1.role)
     {
-        if (sqrt(pow(robot_1.pos[0] - ball.pos[0], 2) + pow(robot_1.pos[1] - ball.pos[1], 2)) < 50)
+        if (sqrt(pow(robot_1.pos[0] - ball.pos[0], 2) + pow(robot_1.pos[1] - ball.pos[1], 2)) < 50 && free_ball)
         {
             ball.pos[0] = robot_1.pos[0] + 20 * cos(robot_1.pos[2] * DEG2RAD);
             ball.pos[1] = robot_1.pos[1] + 20 * sin(robot_1.pos[2] * DEG2RAD);
             ball_size = 15;
+            free_ball = false;
+            ball_on = 2;
         }
         else
         {
+            free_ball = true;
             ball_size = 10;
         }
     }
@@ -380,7 +388,8 @@ void KeyboardHandler()
             SetVelocity(&robot_1, 0, 0, -10);
             break;
         case 'p':
-            state_machine = 1;
+            // state_machine = 1;
+            PassBall();
             break;
         case 'o':
             printf("OASU\n");
@@ -429,8 +438,8 @@ void CalculatePassingPoint()
 
             if (robot_1.role)
             {
-                if (robot_1.pos[1] > 300)
-                    if (pos_x > 300)
+                if (robot_1.pos[1] < 300)
+                    if (pos_x < 300)
                         continue;
                 if (robot_1.pos[0] < 225)
                 {
@@ -588,4 +597,9 @@ void ChangeRole()
         robot_1.role = 0;
         robot_2.role = 1;
     }
+}
+
+void PassBall()
+{
+    KickBall(&ball, target_x, target_y);
 }

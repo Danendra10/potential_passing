@@ -18,4 +18,10 @@ void BallUpdate(Ball_t *ball, float vel_x, float vel_y, float angle)
     ball->pos[1] += vel_y * sin(angle);
 }
 
+void KickBall(Ball_t *ball, float target_x, float target_y)
+{
+    ball->pos[0] = target_y;
+    ball->pos[1] = target_x;
+}
+
 #endif
